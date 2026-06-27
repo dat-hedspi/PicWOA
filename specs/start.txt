@@ -1,0 +1,51 @@
+-----------------------
+
+THỨ TỰ THỰC HIỆN
+IDEA (SPECIFICATION_PICWOA.md)
+   │
+   ▼
+01_PRODUCT_VISION.md
+   │
+   ▼
+02_PRD_GENERATOR.md
+   │
+   ▼
+03_ARCHITECT_GENERATOR.md
+   │
+   ▼
+04_MODULE_PLANNER.md
+   │
+   ▼
+05_BUILD_EXECUTION_PLAN.md
+   │
+   ▼
+06_TECH_LEAD.md
+   │
+   ▼
+==============================
+        BẮT ĐẦU CODE
+==============================
+   │
+   ▼
+07_WORKSPACE_BOOTSTRAP.md
+   │
+   ▼
+Git Init
+GitHub Repo
+Project Compile ✅
+   │
+   ▼
+08_IMPLEMENT_FEATURE.md
+   │
+   ├── Dev A → Camera
+   ├── Dev B → Vision + RuleEngine
+   └── Dev C → AI + Overlay
+   │
+   ▼
+09_INTEGRATION_REVIEW.md
+   │
+   ▼
+Bug Fix
+   │
+   ▼
+Demo Ready 🚀
