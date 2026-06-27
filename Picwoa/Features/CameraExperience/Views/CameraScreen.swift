@@ -9,11 +9,15 @@ struct CameraScreen: View {
 
     init(
         viewModel: CameraViewModel = CameraViewModel(),
-        overlayViewModel: OverlayViewModel = OverlayViewModel()
+        overlayViewModel: OverlayViewModel = OverlayViewModel(),
+        onRequestCoachingRefinement: @escaping () -> Void = {}
     ) {
         _viewModel = State(initialValue: viewModel)
         _overlayViewModel = State(initialValue: overlayViewModel)
+        self.onRequestCoachingRefinement = onRequestCoachingRefinement
     }
+
+    private let onRequestCoachingRefinement: () -> Void
 
     var body: some View {
         ZStack {
@@ -21,16 +25,33 @@ struct CameraScreen: View {
             CameraPreviewView(previewLayer: viewModel.previewLayer)
                 .ignoresSafeArea()
 
-            // Skeleton pose overlay
+            // Skeleton pose overlay (user's actual detected pose)
             SkeletonOverlay(pose: overlayViewModel.currentPose)
                 .ignoresSafeArea()
 
-            // Coaching overlay
-            CoachingOverlay(viewModel: overlayViewModel)
+            // Reference guide overlay (selected target pose)
+            PoseGuideOverlay(
+                activePose: overlayViewModel.activePose,
+                coachingCue: overlayViewModel.personDetected ? overlayViewModel.currentResponse?.mainCue : nil,
+                hintIndex: overlayViewModel.poseHintIndex
+            )
 
-            // Bottom toolbar
-            VStack {
+            // Coaching overlay
+            CoachingOverlay(
+                viewModel: overlayViewModel,
+                onRequestRefinement: onRequestCoachingRefinement
+            )
+
+            // Bottom toolbar + pose suggestion strip
+            VStack(spacing: 0) {
                 Spacer()
+                if !overlayViewModel.suggestedPoses.isEmpty {
+                    PoseSuggestionStrip(
+                        poses: overlayViewModel.suggestedPoses,
+                        activePose: overlayViewModel.activePose,
+                        onSelect: overlayViewModel.selectPose
+                    )
+                }
                 BottomToolbar(
                     isCapturing: viewModel.isCapturing,
                     isReadyToCapture: overlayViewModel.isReadyToCapture,

@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let mockAILogger = Logger(subsystem: "com.picwoa.app", category: "MockAI")
 
 final class MockAIClient: AIBackendProtocol, Sendable {
     private let responses: [AICoachingResponse]
@@ -8,12 +11,21 @@ final class MockAIClient: AIBackendProtocol, Sendable {
     }
 
     func send(_ request: OpenAIRequest) async throws -> AICoachingResponse {
+        mockAILogger.info("Mock send issues=\(request.issues.count)")
+        #if DEBUG
+        print("[Mock] → send issues=\(request.issues.count)")
+        #endif
         // Simulate network latency
         try await Task.sleep(nanoseconds: 300_000_000)  // 0.3s
         // Select response by issue count (deterministic, Sendable-safe — no mutable state).
         // Fewer issues → higher-scoring response; no issues → "Hoàn hảo".
         let index = max(0, responses.count - 1 - request.issues.count)
-        return responses[min(index, responses.count - 1)]
+        let response = responses[min(index, responses.count - 1)]
+        mockAILogger.info("Mock success score=\(response.score) cue=\(response.mainCue, privacy: .public)")
+        #if DEBUG
+        print("[Mock] ✅ score=\(response.score) cue=\"\(response.mainCue)\"")
+        #endif
+        return response
     }
 
     static let defaultResponses: [AICoachingResponse] = [

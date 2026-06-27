@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let aiConfigLogger = Logger(subsystem: "com.picwoa.app", category: "AIConfig")
 
 /// AI pipeline configuration, loaded from `Config.plist` in the app bundle.
 ///
@@ -59,8 +62,10 @@ struct AIConfig: Sendable {
     /// Use real OpenAI only when `useMockAI == false` AND a real key exists.
     static func makeBackend(config: AIConfig = .load()) -> any AIBackendProtocol {
         guard !config.useMockAI, let key = config.apiKey else {
+            aiConfigLogger.info("AI backend=mock useMockAI=\(config.useMockAI) hasKey=\(config.apiKey != nil)")
             return MockAIClient()
         }
+        aiConfigLogger.info("AI backend=openai model=\(config.model, privacy: .public) timeout=\(config.timeoutSeconds) throttle=\(config.throttleSeconds)")
         return OpenAIClient(apiKey: key, model: config.model, timeout: config.timeoutSeconds)
     }
 

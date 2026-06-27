@@ -9,7 +9,8 @@ struct PicwoaApp: App {
         WindowGroup {
             CameraScreen(
                 viewModel: coordinator.cameraViewModel,
-                overlayViewModel: coordinator.overlayViewModel
+                overlayViewModel: coordinator.overlayViewModel,
+                onRequestCoachingRefinement: coordinator.requestCoachingRefinement
             )
                 .preferredColorScheme(.dark)
                 .task { coordinator.start() }

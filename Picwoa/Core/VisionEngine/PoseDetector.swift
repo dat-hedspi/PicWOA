@@ -1,14 +1,27 @@
 import Vision
 import AVFoundation
 import CoreGraphics
+import ImageIO
 
 struct PoseDetector {
-    private static let confidenceThreshold: Float = 0.5
+    private static let confidenceThreshold: Float = 0.3
+    private static let orientations: [CGImagePropertyOrientation] = [.right, .up, .left]
 
     static func detect(in sampleBuffer: CMSampleBuffer) -> PoseObservation? {
-        let request = VNDetectHumanBodyPoseRequest()
-        let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: .up)
+        for orientation in orientations {
+            if let pose = detect(in: sampleBuffer, orientation: orientation) {
+                return pose
+            }
+        }
+        return nil
+    }
 
+    private static func detect(
+        in sampleBuffer: CMSampleBuffer,
+        orientation: CGImagePropertyOrientation
+    ) -> PoseObservation? {
+        let request = VNDetectHumanBodyPoseRequest()
+        let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: orientation)
         do {
             try handler.perform([request])
         } catch {

@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let appCoordinatorLogger = Logger(subsystem: "com.picwoa.app", category: "AppCoordinator")
 
 @MainActor
 @Observable
@@ -58,6 +61,7 @@ final class AppCoordinator {
                 await MainActor.run { overlayViewModel.updatePose(pose) }
                 guard let pose else { continue }
                 let scene = await sceneStore.current()
+                await MainActor.run { overlayViewModel.updateScene(scene) }
                 await orchestrator.process(pose: pose, scene: scene)
             }
         })
@@ -84,6 +88,11 @@ final class AppCoordinator {
         tasks.removeAll()
         hasStarted = false
         cameraEngine.stopSession()
+    }
+
+    func requestCoachingRefinement() {
+        appCoordinatorLogger.info("User requested coaching refinement")
+        orchestrator.requestRefinement()
     }
 }
 

@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let orchestratorLogger = Logger(subsystem: "com.picwoa.app", category: "AIOrchestrator")
 
 /// Coordinates the entire AI pipeline — throttle, cache, fallback, validate.
 /// Every `RuleEngineResult` goes through the decision engine per AI_ORCHESTRATION_SPEC §2.
@@ -18,6 +21,8 @@ final class AIOrchestrator: AICoachingProvider {
     private var cachedResponse: AICoachingResponse?
     private var cachedAt: Date = .distantPast
     private var previousResult: RuleEngineResult?
+    private var latestResult: RuleEngineResult?
+    private var latestScene: SceneContext = .unknown
 
     // Observability (debug)
     private(set) var lastMetrics: OrchestratorMetrics?
@@ -28,10 +33,10 @@ final class AIOrchestrator: AICoachingProvider {
 
     // Stream-driven tasks (when using start(ruleStream:sceneStream:))
     private var streamTasks: [Task<Void, Never>] = []
-    private var latestScene: SceneContext = .unknown
     // In-flight AI request — cancelled & replaced when a newer call starts, so the
     // pose loop never blocks on the network (keeps coaching smooth).
     private var aiTask: Task<Void, Never>?
+    private var isAIRequestInFlight = false
 
     init(
         config: AIConfig = .load(),
@@ -75,6 +80,7 @@ final class AIOrchestrator: AICoachingProvider {
         streamTasks.removeAll()
         aiTask?.cancel()
         aiTask = nil
+        isAIRequestInFlight = false
     }
 
     /// Reset the cache when the user captures — AI_ORCHESTRATION_SPEC §8.
@@ -82,7 +88,10 @@ final class AIOrchestrator: AICoachingProvider {
         cachedResponse = nil
         cachedAt = .distantPast
         previousResult = nil
+        latestResult = nil
+        latestScene = .unknown
         lastRequestTime = .distantPast
+        isAIRequestInFlight = false
     }
 
     // MARK: - Direct entry (when the orchestrator runs the RuleEngine itself)
@@ -100,34 +109,53 @@ final class AIOrchestrator: AICoachingProvider {
 
     private func ingest(_ result: RuleEngineResult, scene: SceneContext) async {
         let startedAt = Date()
+        latestResult = result
+        latestScene = scene
 
-        // Tier 3 — emit the RuleEngine result IMMEDIATELY (zero latency UX).
+        // Realtime coaching stays deterministic. Cloud AI is requested only when
+        // the user taps the suggestion card.
         emit(makeFallbackResponse(from: result))
+        previousResult = result
 
-        // Path B — no more issues → STOP, don't call AI.
         if result.readyToCapture {
+            finish(.ruleEngineClean, since: startedAt, cacheHit: false, issues: result.issues.count)
+        } else {
+            finish(.ruleEngineThrottle, since: startedAt, cacheHit: false, issues: result.issues.count)
+        }
+    }
+
+    func requestRefinement() {
+        guard let result = latestResult else {
+            orchestratorLogger.warning("Refinement ignored: no latest rule result")
+            return
+        }
+        let scene = latestScene
+        let startedAt = Date()
+        orchestratorLogger.info("Refinement requested issues=\(result.issues.count) ready=\(result.readyToCapture) scene=\(scene.rawValue, privacy: .public)")
+
+        if result.readyToCapture {
+            orchestratorLogger.info("Refinement served by rule engine: already ready")
+            emit(makeFallbackResponse(from: result))
             finish(.ruleEngineClean, since: startedAt, cacheHit: false, issues: result.issues.count)
             return
         }
 
-        // Throttle + cache invalidation.
-        let throttleElapsed = Date().timeIntervalSince(lastRequestTime) >= config.throttleSeconds
-        let invalidated = previousResult.map { shouldInvalidateCache(current: result, previous: $0) } ?? true
-        previousResult = result
-
-        // Path C — within the throttle window and issues haven't changed much → use cached.
-        guard throttleElapsed || invalidated else {
-            if let cached = freshCachedResponse() { emit(cached) }
-            finish(.ruleEngineThrottle, since: startedAt, cacheHit: cachedResponse != nil, issues: result.issues.count)
+        if let cached = freshCachedResponse(),
+           Date().timeIntervalSince(lastRequestTime) < config.throttleSeconds {
+            orchestratorLogger.info("Refinement served from cache throttleSeconds=\(self.config.throttleSeconds)")
+            emit(cached)
+            finish(.ruleEngineThrottle, since: startedAt, cacheHit: true, issues: result.issues.count)
             return
         }
 
-        // Path D — call AI in a DETACHED task so the pose loop keeps consuming (smooth UX).
-        // The Tier-3 fallback was already emitted above; the AI response overrides it when it
-        // arrives. Cancel any in-flight call so a newer pose always wins (no out-of-order overwrite).
         lastRequestTime = Date()
         let request = OpenAIRequest(from: result, scene: scene)
-        aiTask?.cancel()
+        guard !isAIRequestInFlight else {
+            orchestratorLogger.info("Refinement ignored: backend request already in flight")
+            return
+        }
+        isAIRequestInFlight = true
+        orchestratorLogger.info("Refinement dispatching backend request issues=\(request.issues.count)")
         aiTask = Task { [weak self] in
             await self?.performAICall(request: request, result: result, startedAt: startedAt)
         }
@@ -140,6 +168,11 @@ final class AIOrchestrator: AICoachingProvider {
         result: RuleEngineResult,
         startedAt: Date
     ) async {
+        defer {
+            isAIRequestInFlight = false
+            aiTask = nil
+        }
+
         do {
             let response = try await backend.send(request)
             if Task.isCancelled { return }
