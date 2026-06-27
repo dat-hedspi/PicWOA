@@ -3,7 +3,8 @@
 *.xcworkspace/xcuserdata/
 *.xcworkspace/xcshareddata/
 DerivedData/
-.derivedData
+.derivedData/
+
 # xcodegen-generated (regenerate with `xcodegen generate`)
 *.xcodeproj/
 Picwoa/Resources/Info.plist

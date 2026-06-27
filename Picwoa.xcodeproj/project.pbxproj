@@ -136,7 +136,6 @@
 		74FB001445B3ADDFF5FF20A0 /* VisionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionEngine.swift; sourceTree = "<group>"; };
 		75365869E71962F4983BB082 /* RuleEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuleEngineTests.swift; sourceTree = "<group>"; };
 		7BEDCA66F5BA4982A091438C /* MockAIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockAIClient.swift; sourceTree = "<group>"; };
-		7E6CC7886EF2005C5EC8DC4C /* Config.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Config.plist; sourceTree = "<group>"; };
 		7E74F836556801295AA7208F /* CameraBufferProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraBufferProvider.swift; sourceTree = "<group>"; };
 		7F195F017442FB07293EC86A /* Vision.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Vision.framework; path = System/Library/Frameworks/Vision.framework; sourceTree = SDKROOT; };
 		82337C3110748AD5C2E6A92B /* Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Colors.swift; sourceTree = "<group>"; };
