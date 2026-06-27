@@ -1,4 +1,7 @@
 import SwiftUI
+import OSLog
+
+private let cameraScreenLogger = Logger(subsystem: "com.picwoa.app", category: "CameraScreen")
 
 struct CameraScreen: View {
     @State private var viewModel: CameraViewModel
@@ -101,8 +104,16 @@ struct CameraScreen: View {
     private func handleCapture() {
         Task {
             if let image = await viewModel.capture() {
+                let response = overlayViewModel.lastResponse ?? .placeholder
+                let source = overlayViewModel.lastResponse == nil ? "placeholder" : "lastResponse"
+                cameraScreenLogger.info(
+                    "handleCapture coachingResponse source=\(source, privacy: .public) mainCue=\(response.mainCue, privacy: .public) score=\(response.score) ready=\(response.isReadyToCapture) overlayCount=\(response.overlay.count)"
+                )
+                #if DEBUG
+                print("[CameraScreen] handleCapture coachingResponse source=\(source) mainCue=\"\(response.mainCue)\" score=\(response.score) ready=\(response.isReadyToCapture) overlayCount=\(response.overlay.count)")
+                #endif
                 capturedImage = image
-                coachingResponse = overlayViewModel.lastResponse ?? .placeholder
+                coachingResponse = response
                 showReview = true
             }
         }
