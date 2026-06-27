@@ -38,6 +38,7 @@ final class RuleEngineTests: XCTestCase {
         )
         let result = engine.evaluate(pose: pose, scene: .outdoor)
         XCTAssertTrue(result.readyToCapture, "Expected readyToCapture but got issues: \(result.issues.map(\.id))")
+        XCTAssertEqual(result.framePosition, "center")
     }
 
     func testLeftShoulderLowRule() {
@@ -52,6 +53,52 @@ final class RuleEngineTests: XCTestCase {
         )
         let result = engine.evaluate(pose: pose, scene: .outdoor)
         XCTAssertTrue(result.issues.contains { $0.id == "left_shoulder_low" })
+    }
+
+    func testRightShoulderLowRule() {
+        let result = engine.evaluate(
+            pose: PoseAnalysisResult(chinAngle: 0, shoulderDelta: -0.08, torsoWidth: 0.24, frameCenterX: 0.5),
+            scene: .outdoor
+        )
+
+        XCTAssertTrue(result.issues.contains { $0.id == "right_shoulder_low" })
+    }
+
+    func testTorsoFacingCameraRule() {
+        let result = engine.evaluate(
+            pose: PoseAnalysisResult(chinAngle: 0, shoulderDelta: 0, torsoWidth: 0.32, frameCenterX: 0.5),
+            scene: .outdoor
+        )
+
+        XCTAssertTrue(result.issues.contains { $0.id == "torso_facing" })
+    }
+
+    func testBodyOffCenterRule() {
+        let result = engine.evaluate(
+            pose: PoseAnalysisResult(chinAngle: 0, shoulderDelta: 0, torsoWidth: 0.24, frameCenterX: 0.72),
+            scene: .outdoor
+        )
+
+        XCTAssertTrue(result.issues.contains { $0.id == "off_center_left" })
+        XCTAssertEqual(result.framePosition, "right")
+    }
+
+    func testTooFarRule() {
+        let result = engine.evaluate(
+            pose: PoseAnalysisResult(chinAngle: 0, shoulderDelta: 0, torsoWidth: 0.08, frameCenterX: 0.5),
+            scene: .outdoor
+        )
+
+        XCTAssertTrue(result.issues.contains { $0.id == "too_far" })
+    }
+
+    func testTooCloseRule() {
+        let result = engine.evaluate(
+            pose: PoseAnalysisResult(chinAngle: 0, shoulderDelta: 0, torsoWidth: 0.56, frameCenterX: 0.5),
+            scene: .outdoor
+        )
+
+        XCTAssertTrue(result.issues.contains { $0.id == "too_close" })
     }
 
     func testRulesPrioritized() {

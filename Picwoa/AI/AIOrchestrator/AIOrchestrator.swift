@@ -22,8 +22,8 @@ final class AIOrchestrator: AICoachingProvider {
     // Observability (debug)
     private(set) var lastMetrics: OrchestratorMetrics?
 
-    // Output stream
-    let coachingStream: AsyncStream<AICoachingResponse>
+    // Output stream — nonisolated so non-MainActor consumers (AppCoordinator wiring) can read it.
+    nonisolated let coachingStream: AsyncStream<AICoachingResponse>
     private let continuation: AsyncStream<AICoachingResponse>.Continuation
 
     // Stream-driven tasks (when using start(ruleStream:sceneStream:))

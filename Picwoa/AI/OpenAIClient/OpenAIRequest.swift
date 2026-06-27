@@ -12,10 +12,11 @@ struct PoseIssue: Sendable {
 /// quality output instead of just a list of IDs. Still minimal (< 300 input tokens).
 struct OpenAIRequest: Sendable {
     let scene: String
-    // TODO(V1): poseGoal/framing/framePosition/personCount are currently PLACEHOLDERS —
-    // always use defaults, NOT yet wired from app state (orientation, capture mode, multi-person).
-    // When wiring real state, AppCoordinator passes them into this init. Kept in the payload so
-    // the prompt template is already ready to receive them, avoiding a contract change later.
+    // framePosition is wired from Dev B's RuleEngineResult.framePosition (left/center/right).
+    // TODO(V1): poseGoal/framing/personCount are still PLACEHOLDERS — always default, NOT yet
+    // wired from app state (orientation, capture mode, multi-person). When wiring real state,
+    // AppCoordinator passes them into this init. Kept in the payload so the prompt template is
+    // already ready to receive them, avoiding a contract change later.
     let poseGoal: String
     let framing: String
     let framePosition: String
@@ -28,13 +29,13 @@ struct OpenAIRequest: Sendable {
         scene: SceneContext,
         poseGoal: String = "portrait",      // placeholder — see TODO(V1) above
         framing: String = "vertical_9_16",  // placeholder
-        framePosition: String = "center",   // placeholder
+        framePosition: String? = nil,        // nil → use Dev B's RuleEngineResult.framePosition
         personCount: Int = 1                 // placeholder (multi-person in V2)
     ) {
         self.scene = scene.rawValue
         self.poseGoal = poseGoal
         self.framing = framing
-        self.framePosition = framePosition
+        self.framePosition = framePosition ?? result.framePosition
         self.personCount = personCount
         self.issues = result.issues.map {
             PoseIssue(

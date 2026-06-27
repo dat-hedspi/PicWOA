@@ -4,26 +4,29 @@ import AVFoundation
 actor VisionEngine: PoseProvider {
     static let shared = VisionEngine()
 
-    private var poseContinuation: AsyncStream<PoseObservation?>.Continuation?
-    private var personContinuation: AsyncStream<Bool>.Continuation?
+    private let _poseContinuation: AsyncStream<PoseObservation?>.Continuation
+    private let _personContinuation: AsyncStream<Bool>.Continuation
 
-    private(set) lazy var poseStream: AsyncStream<PoseObservation?> = {
-        AsyncStream { [weak self] continuation in
-            Task { await self?.poseContinuation = continuation }
-        }
-    }()
+    nonisolated let poseStream: AsyncStream<PoseObservation?>
+    nonisolated let personDetectedStream: AsyncStream<Bool>
 
-    private(set) lazy var personDetectedStream: AsyncStream<Bool> = {
-        AsyncStream { [weak self] continuation in
-            Task { await self?.personContinuation = continuation }
-        }
-    }()
+    private init() {
+        let (poseStr, poseCont) = AsyncStream<PoseObservation?>.makeStream()
+        let (personStr, personCont) = AsyncStream<Bool>.makeStream()
+        poseStream = poseStr
+        personDetectedStream = personStr
+        _poseContinuation = poseCont
+        _personContinuation = personCont
+    }
 
     func process(sampleBuffer: CMSampleBuffer) {
-        // TODO: Dev B — implement VNDetectHumanBodyPoseRequest
-        // let request = VNDetectHumanBodyPoseRequest()
-        // let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer)
-        // try? handler.perform([request])
-        // parse result → emit PoseObservation
+        let pose = PoseDetector.detect(in: sampleBuffer)
+        _poseContinuation.yield(pose)
+
+        if pose != nil {
+            _personContinuation.yield(true)
+        } else {
+            _personContinuation.yield(PersonDetector.detect(in: sampleBuffer))
+        }
     }
 }
