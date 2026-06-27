@@ -4,26 +4,34 @@ import AVFoundation
 actor VisionEngine: PoseProvider {
     static let shared = VisionEngine()
 
-    private var poseContinuation: AsyncStream<PoseObservation?>.Continuation?
-    private var personContinuation: AsyncStream<Bool>.Continuation?
+    nonisolated let poseStream: AsyncStream<PoseObservation?>
+    nonisolated let personDetectedStream: AsyncStream<Bool>
 
-    private(set) lazy var poseStream: AsyncStream<PoseObservation?> = {
-        AsyncStream { [weak self] continuation in
-            Task { await self?.poseContinuation = continuation }
-        }
-    }()
+    private let poseContinuation: AsyncStream<PoseObservation?>.Continuation
+    private let personContinuation: AsyncStream<Bool>.Continuation
 
-    private(set) lazy var personDetectedStream: AsyncStream<Bool> = {
-        AsyncStream { [weak self] continuation in
-            Task { await self?.personContinuation = continuation }
+    init() {
+        var poseContinuation: AsyncStream<PoseObservation?>.Continuation!
+        self.poseStream = AsyncStream { continuation in
+            poseContinuation = continuation
         }
-    }()
+        self.poseContinuation = poseContinuation
+
+        var personContinuation: AsyncStream<Bool>.Continuation!
+        self.personDetectedStream = AsyncStream { continuation in
+            personContinuation = continuation
+        }
+        self.personContinuation = personContinuation
+    }
 
     func process(sampleBuffer: CMSampleBuffer) {
-        // TODO: Dev B — implement VNDetectHumanBodyPoseRequest
-        // let request = VNDetectHumanBodyPoseRequest()
-        // let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer)
-        // try? handler.perform([request])
-        // parse result → emit PoseObservation
+        let pose = PoseDetector.detect(in: sampleBuffer)
+        poseContinuation.yield(pose)
+
+        if pose != nil {
+            personContinuation.yield(true)
+        } else {
+            personContinuation.yield(PersonDetector.detect(in: sampleBuffer))
+        }
     }
 }

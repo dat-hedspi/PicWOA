@@ -1,9 +1,14 @@
 import AVFoundation
 import CoreImage
+import CoreImage.CIFilterBuiltins
 
 struct SceneClassifierService {
 
-    func classify(_ sampleBuffer: CMSampleBuffer) -> SceneContext {
+    func classify(_ sampleBuffer: CMSampleBuffer) async -> SceneContext {
+        classifySynchronously(sampleBuffer)
+    }
+
+    func classifySynchronously(_ sampleBuffer: CMSampleBuffer) -> SceneContext {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             return .unknown
         }
