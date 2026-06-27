@@ -6,12 +6,12 @@ final class AppCoordinator {
     let cameraEngine: CameraEngine
     let visionEngine: VisionEngine
     let ruleEngine: RuleEngine
+    let sceneClassifier: SceneClassifierService
     let orchestrator: AIOrchestrator
     let overlayViewModel: OverlayViewModel
     let cameraViewModel: CameraViewModel
 
-    private let sceneClassifier: SceneClassifierService
-    private var latestSceneContext: SceneContext = .outdoor
+    private let sceneStore = SceneContextStore()
     private var tasks: [Task<Void, Never>] = []
     private var hasStarted = false
 
@@ -38,29 +38,26 @@ final class AppCoordinator {
         guard !hasStarted else { return }
         hasStarted = true
 
-        tasks.append(Task { [cameraEngine, visionEngine] in
+        tasks.append(Task { [cameraEngine, visionEngine, sceneClassifier, sceneStore] in
+            var lastSceneClassification = Date.distantPast
+
             for await buffer in cameraEngine.makeSampleBufferStream() {
                 await visionEngine.process(sampleBuffer: buffer)
-            }
-        })
 
-        tasks.append(Task { [weak self, cameraEngine, sceneClassifier] in
-            var lastClassificationTime = Date.distantPast
-            for await buffer in cameraEngine.makeSampleBufferStream() {
-                guard Date().timeIntervalSince(lastClassificationTime) >= 5 else { continue }
-                lastClassificationTime = Date()
+                let now = Date()
+                guard now.timeIntervalSince(lastSceneClassification) >= 5 else { continue }
+                lastSceneClassification = now
+
                 let scene = await sceneClassifier.classify(buffer)
-                await MainActor.run {
-                    self?.latestSceneContext = scene
-                }
+                await sceneStore.update(scene)
             }
         })
 
-        tasks.append(Task { [weak self, visionEngine, orchestrator, overlayViewModel] in
+        tasks.append(Task { [visionEngine, orchestrator, sceneStore, overlayViewModel] in
             for await pose in visionEngine.poseStream {
                 await MainActor.run { overlayViewModel.updatePose(pose) }
                 guard let pose else { continue }
-                let scene = await MainActor.run { self?.latestSceneContext ?? .outdoor }
+                let scene = await sceneStore.current()
                 await orchestrator.process(pose: pose, scene: scene)
             }
         })
@@ -86,7 +83,18 @@ final class AppCoordinator {
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
         hasStarted = false
-        latestSceneContext = .outdoor
         cameraEngine.stopSession()
+    }
+}
+
+private actor SceneContextStore {
+    private var scene: SceneContext = .unknown
+
+    func update(_ scene: SceneContext) {
+        self.scene = scene
+    }
+
+    func current() -> SceneContext {
+        scene
     }
 }
