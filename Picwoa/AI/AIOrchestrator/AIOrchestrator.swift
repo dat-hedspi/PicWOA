@@ -18,20 +18,27 @@ final class AIOrchestrator: AICoachingProvider {
     private var cachedResponse: AICoachingResponse?
     private var cachedAt: Date = .distantPast
     private var previousResult: RuleEngineResult?
+    // Latest realtime RuleEngine snapshot — what `requestAICoaching()` (button) acts on.
+    private var latestResult: RuleEngineResult?
 
     // Observability (debug)
     private(set) var lastMetrics: OrchestratorMetrics?
 
     // Output stream — nonisolated so non-MainActor consumers (AppCoordinator wiring) can read it.
-    nonisolated let coachingStream: AsyncStream<AICoachingResponse>
-    private let continuation: AsyncStream<AICoachingResponse>.Continuation
+    // Multicast so each `start()` re-subscribes with a fresh stream; bufferingNewest(1) keeps
+    // only the latest coaching per subscriber (the overlay never needs a backlog).
+    private let coachingBroadcaster = AsyncBroadcaster<AICoachingResponse>()
+    nonisolated var coachingStream: AsyncStream<AICoachingResponse> {
+        coachingBroadcaster.subscribe(bufferingPolicy: .bufferingNewest(1))
+    }
 
     // Stream-driven tasks (when using start(ruleStream:sceneStream:))
     private var streamTasks: [Task<Void, Never>] = []
     private var latestScene: SceneContext = .unknown
-    // In-flight AI request — cancelled & replaced when a newer call starts, so the
+    // In-flight AI request — cancelled & replaced when the pose materially changes, so the
     // pose loop never blocks on the network (keeps coaching smooth).
     private var aiTask: Task<Void, Never>?
+    private var aiInFlight = false
 
     init(
         config: AIConfig = .load(),
@@ -41,12 +48,6 @@ final class AIOrchestrator: AICoachingProvider {
         self.config = config
         self.backend = backend ?? AIConfig.makeBackend(config: config)
         self.ruleEngine = ruleEngine
-        // bufferingNewest(1): the overlay only needs the latest coaching; avoids a
-        // backlog of stale responses if the UI consumes slower than the emit rate (real-time path).
-        (coachingStream, continuation) = AsyncStream.makeStream(
-            of: AICoachingResponse.self,
-            bufferingPolicy: .bufferingNewest(1)
-        )
     }
 
     // MARK: - Stream-driven entry (integration with Dev B)
@@ -75,6 +76,7 @@ final class AIOrchestrator: AICoachingProvider {
         streamTasks.removeAll()
         aiTask?.cancel()
         aiTask = nil
+        aiInFlight = false
     }
 
     /// Reset the cache when the user captures — AI_ORCHESTRATION_SPEC §8.
@@ -83,6 +85,40 @@ final class AIOrchestrator: AICoachingProvider {
         cachedAt = .distantPast
         previousResult = nil
         lastRequestTime = .distantPast
+    }
+
+    // MARK: - Button-driven entry (AI only on explicit user request)
+
+    /// Realtime, OFFLINE path — runs only the RuleEngine and emits its coaching every frame.
+    /// NEVER calls the network. Remembers the latest snapshot so `requestAICoaching()` can act
+    /// on the current pose when the user taps the AI button.
+    func updateRuleOnly(pose: PoseObservation?, scene: SceneContext) {
+        let result = ruleEngine.evaluate(pose: pose, scene: scene)
+        latestResult = result
+        latestScene = scene
+        emit(makeFallbackResponse(from: result))
+    }
+
+    /// User-initiated AI coaching for the CURRENT pose. One call per tap — no throttle, no
+    /// polling. Awaits the network round-trip so the UI can show a loading state, then emits
+    /// the AI response (or best-available fallback on error). No-op if the pose is already good.
+    func requestAICoaching() async {
+        guard let result = latestResult else { return }
+        let startedAt = Date()
+
+        // Already good → nothing to coach, don't spend an API call.
+        if result.readyToCapture {
+            emit(makeFallbackResponse(from: result))
+            finish(.ruleEngineClean, since: startedAt, cacheHit: false, issues: result.issues.count)
+            return
+        }
+
+        // Supersede any previous in-flight request, then call once and wait.
+        aiTask?.cancel()
+        aiTask = nil
+        aiInFlight = true
+        let request = OpenAIRequest(from: result, scene: latestScene)
+        await performAICall(request: request, result: result, startedAt: startedAt)
     }
 
     // MARK: - Direct entry (when the orchestrator runs the RuleEngine itself)
@@ -122,12 +158,21 @@ final class AIOrchestrator: AICoachingProvider {
             return
         }
 
+        // If a call is already running and the pose hasn't materially changed, let it finish
+        // instead of cancel+restart — otherwise latency > throttle would loop forever and the
+        // AI response would never reach the UI.
+        if aiInFlight && !invalidated {
+            finish(.ruleEngineThrottle, since: startedAt, cacheHit: freshCachedResponse() != nil, issues: result.issues.count)
+            return
+        }
+
         // Path D — call AI in a DETACHED task so the pose loop keeps consuming (smooth UX).
         // The Tier-3 fallback was already emitted above; the AI response overrides it when it
-        // arrives. Cancel any in-flight call so a newer pose always wins (no out-of-order overwrite).
+        // arrives. A material pose change cancels the in-flight call so the newer pose wins.
         lastRequestTime = Date()
         let request = OpenAIRequest(from: result, scene: scene)
         aiTask?.cancel()
+        aiInFlight = true
         aiTask = Task { [weak self] in
             await self?.performAICall(request: request, result: result, startedAt: startedAt)
         }
@@ -142,7 +187,8 @@ final class AIOrchestrator: AICoachingProvider {
     ) async {
         do {
             let response = try await backend.send(request)
-            if Task.isCancelled { return }
+            if Task.isCancelled { return }   // superseded — the replacement owns aiInFlight
+            aiInFlight = false
             guard ResponseValidator.validate(response) else {
                 emit(bestAvailableResponse(aiResponse: nil, ruleResult: result))
                 finish(.aiError, since: startedAt, cacheHit: false, issues: result.issues.count, reason: "invalid_response")
@@ -153,9 +199,10 @@ final class AIOrchestrator: AICoachingProvider {
             emit(response)
             finish(.aiSuccess, since: startedAt, cacheHit: false, issues: result.issues.count)
         } catch is CancellationError {
-            return
+            return   // superseded — the replacement owns aiInFlight
         } catch {
             if Task.isCancelled { return }
+            aiInFlight = false
             // Path E — timeout / error → bestAvailable (cached < 30s or rule).
             emit(bestAvailableResponse(aiResponse: nil, ruleResult: result))
             let path: DecisionPath = isTimeout(error) ? .aiTimeout : .aiError
@@ -221,7 +268,7 @@ final class AIOrchestrator: AICoachingProvider {
     // MARK: - Helpers
 
     private func emit(_ response: AICoachingResponse) {
-        continuation.yield(response)
+        coachingBroadcaster.yield(response)
     }
 
     private func isTimeout(_ error: Error) -> Bool {

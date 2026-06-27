@@ -59,9 +59,26 @@ struct AIConfig: Sendable {
     /// Use real OpenAI only when `useMockAI == false` AND a real key exists.
     static func makeBackend(config: AIConfig = .load()) -> any AIBackendProtocol {
         guard !config.useMockAI, let key = config.apiKey else {
+            #if DEBUG
+            print("⚠️ [AIConfig] Dùng MockAIClient — KHÔNG gọi OpenAI. " +
+                  "useMockAI=\(config.useMockAI), hasRealKey=\(config.apiKey != nil). " +
+                  "Điền OPENAI_API_KEY thật + USE_MOCK_AI=false trong Config.plist để bật AI thật.")
+            #endif
             return MockAIClient()
         }
+        #if DEBUG
+        print("✅ [AIConfig] Dùng OpenAIClient (model=\(config.model)) — AI thật đã bật.")
+        #endif
         return OpenAIClient(apiKey: key, model: config.model, timeout: config.timeoutSeconds)
+    }
+
+    /// Select the pose-suggestion provider. Same Mock ↔ Real swap point as `makeBackend`:
+    /// AI ranking only when a real key exists, otherwise the offline `MockPoseSuggestionProvider`.
+    static func makePoseSuggestionProvider(config: AIConfig = .load()) -> any PoseSuggestionProviding {
+        guard !config.useMockAI, let key = config.apiKey else {
+            return MockPoseSuggestionProvider()
+        }
+        return OpenAIPoseSuggestionProvider(apiKey: key, model: config.model, timeout: config.timeoutSeconds)
     }
 
     private static func numeric(_ value: Any?) -> TimeInterval? {

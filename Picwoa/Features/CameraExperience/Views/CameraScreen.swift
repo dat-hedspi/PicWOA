@@ -1,11 +1,19 @@
 import SwiftUI
+import OSLog
+
+private let cameraScreenLogger = Logger(subsystem: "com.picwoa.app", category: "CameraScreen")
 
 struct CameraScreen: View {
     @State private var viewModel: CameraViewModel
     @State private var overlayViewModel: OverlayViewModel
+    @State private var poseSuggestionViewModel: PoseSuggestionViewModel
     @State private var capturedImage: UIImage?
     @State private var coachingResponse: AICoachingResponse?
     @State private var showReview = false
+    @State private var isRequestingAI = false
+
+    /// Fired when the user taps the AI button — wired to `AppCoordinator.requestAICoaching()`.
+    private let onRequestAICoaching: () async -> Void
 
     // Zoom state
     @State private var baseZoom: CGFloat = 1.0
@@ -14,10 +22,14 @@ struct CameraScreen: View {
 
     init(
         viewModel: CameraViewModel = CameraViewModel(),
-        overlayViewModel: OverlayViewModel = OverlayViewModel()
+        overlayViewModel: OverlayViewModel = OverlayViewModel(),
+        poseSuggestionViewModel: PoseSuggestionViewModel = PoseSuggestionViewModel(),
+        onRequestAICoaching: @escaping () async -> Void = {}
     ) {
         _viewModel = State(initialValue: viewModel)
         _overlayViewModel = State(initialValue: overlayViewModel)
+        _poseSuggestionViewModel = State(initialValue: poseSuggestionViewModel)
+        self.onRequestAICoaching = onRequestAICoaching
     }
 
     var body: some View {
@@ -34,6 +46,16 @@ struct CameraScreen: View {
             // Coaching overlay
             CoachingOverlay(viewModel: overlayViewModel)
 
+            // Pose suggestion — top-left reference dáng that fits the scene
+            VStack {
+                HStack {
+                    PoseSuggestionCard(viewModel: poseSuggestionViewModel)
+                    Spacer()
+                }
+                Spacer()
+            }
+            .padding(Spacing.m)
+
             // Zoom indicator — top center, fades after gesture ends
             VStack {
                 ZoomIndicator(factor: viewModel.zoomFactor)
@@ -49,7 +71,9 @@ struct CameraScreen: View {
                 BottomToolbar(
                     isCapturing: viewModel.isCapturing,
                     isReadyToCapture: overlayViewModel.isReadyToCapture,
-                    onCapture: handleCapture
+                    isRequestingAI: isRequestingAI,
+                    onCapture: handleCapture,
+                    onRequestAI: handleRequestAI
                 )
             }
         }
@@ -77,6 +101,15 @@ struct CameraScreen: View {
         }
     }
 
+    private func handleRequestAI() {
+        guard !isRequestingAI else { return }
+        Task {
+            isRequestingAI = true
+            await onRequestAICoaching()
+            isRequestingAI = false
+        }
+    }
+
     private var pinchGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
@@ -98,8 +131,22 @@ struct CameraScreen: View {
     private func handleCapture() {
         Task {
             if let image = await viewModel.capture() {
+                // Safety net: prefer the live response, fall back to the last-known one
+                // (kept even when the subject briefly leaves frame), then a static placeholder.
+                let response = overlayViewModel.currentResponse
+                    ?? overlayViewModel.lastResponse
+                    ?? .placeholder
+                let source = overlayViewModel.currentResponse != nil ? "currentResponse"
+                    : overlayViewModel.lastResponse != nil ? "lastResponse"
+                    : "placeholder"
+                cameraScreenLogger.info(
+                    "handleCapture coachingResponse source=\(source, privacy: .public) mainCue=\(response.mainCue, privacy: .public) score=\(response.score) ready=\(response.isReadyToCapture) overlayCount=\(response.overlay.count)"
+                )
+                #if DEBUG
+                print("[CameraScreen] handleCapture coachingResponse source=\(source) mainCue=\"\(response.mainCue)\" score=\(response.score) ready=\(response.isReadyToCapture) overlayCount=\(response.overlay.count)")
+                #endif
                 capturedImage = image
-                coachingResponse = overlayViewModel.lastResponse ?? .placeholder
+                coachingResponse = response
                 showReview = true
             }
         }
