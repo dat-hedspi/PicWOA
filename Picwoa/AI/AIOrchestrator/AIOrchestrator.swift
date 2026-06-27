@@ -29,6 +29,9 @@ final class AIOrchestrator: AICoachingProvider {
     // Stream-driven tasks (when using start(ruleStream:sceneStream:))
     private var streamTasks: [Task<Void, Never>] = []
     private var latestScene: SceneContext = .unknown
+    // In-flight AI request — cancelled & replaced when a newer call starts, so the
+    // pose loop never blocks on the network (keeps coaching smooth).
+    private var aiTask: Task<Void, Never>?
 
     init(
         config: AIConfig = .load(),
@@ -70,6 +73,8 @@ final class AIOrchestrator: AICoachingProvider {
     func stop() {
         streamTasks.forEach { $0.cancel() }
         streamTasks.removeAll()
+        aiTask?.cancel()
+        aiTask = nil
     }
 
     /// Reset the cache when the user captures — AI_ORCHESTRATION_SPEC §8.
@@ -113,19 +118,27 @@ final class AIOrchestrator: AICoachingProvider {
             return
         }
 
-        // Path D — call AI.
-        // TRADEOFF (accepted for MVP): `await backend.send` runs sequentially inside
-        // the ruleStream `for await` loop, so if the network is slow (up to ~timeout×2 due
-        // to retries) new rule results are held back until this call finishes → coaching
-        // can be delayed by a few seconds. Mitigated by: (1) the Tier-3 fallback is emitted
-        // IMMEDIATELY at the top of the function, (2) the 3s throttle caps it at 1 call/3s. V1:
-        // move the network into a separate Task so the loop keeps consuming. NOT changing this
-        // for the MVP because it would break the cache/throttle write ordering that @MainActor serializes.
+        // Path D — call AI in a DETACHED task so the pose loop keeps consuming (smooth UX).
+        // The Tier-3 fallback was already emitted above; the AI response overrides it when it
+        // arrives. Cancel any in-flight call so a newer pose always wins (no out-of-order overwrite).
         lastRequestTime = Date()
         let request = OpenAIRequest(from: result, scene: scene)
+        aiTask?.cancel()
+        aiTask = Task { [weak self] in
+            await self?.performAICall(request: request, result: result, startedAt: startedAt)
+        }
+    }
 
+    /// Network call + emit, run OFF the pose loop. @MainActor-isolated, so the cache writes
+    /// after `await` stay ordered. Cancellation = superseded by a newer pose → drop silently.
+    private func performAICall(
+        request: OpenAIRequest,
+        result: RuleEngineResult,
+        startedAt: Date
+    ) async {
         do {
             let response = try await backend.send(request)
+            if Task.isCancelled { return }
             guard ResponseValidator.validate(response) else {
                 emit(bestAvailableResponse(aiResponse: nil, ruleResult: result))
                 finish(.aiError, since: startedAt, cacheHit: false, issues: result.issues.count, reason: "invalid_response")
@@ -135,7 +148,10 @@ final class AIOrchestrator: AICoachingProvider {
             cachedAt = Date()
             emit(response)
             finish(.aiSuccess, since: startedAt, cacheHit: false, issues: result.issues.count)
+        } catch is CancellationError {
+            return
         } catch {
+            if Task.isCancelled { return }
             // Path E — timeout / error → bestAvailable (cached < 30s or rule).
             emit(bestAvailableResponse(aiResponse: nil, ruleResult: result))
             let path: DecisionPath = isTimeout(error) ? .aiTimeout : .aiError
