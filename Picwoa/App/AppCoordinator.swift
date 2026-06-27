@@ -12,6 +12,8 @@ final class AppCoordinator {
 
     private var tasks: [Task<Void, Never>] = []
     private var hasStarted = false
+    // Latest classified scene, fed into the AI prompt (updated ~1×/sec from the camera buffer).
+    private var latestScene: SceneContext = .outdoor
 
     init(
         cameraEngine: CameraEngine = .shared,
@@ -35,16 +37,26 @@ final class AppCoordinator {
         guard !hasStarted else { return }
         hasStarted = true
 
-        tasks.append(Task { [cameraEngine, visionEngine] in
+        tasks.append(Task { [cameraEngine, visionEngine, weak self] in
+            let classifier = SceneClassifierService()
+            var frame = 0
             for await buffer in cameraEngine.makeSampleBufferStream() {
+                // Classify scene ~once/sec BEFORE handing the buffer to the Vision actor
+                // (after the actor call the buffer is "sent" and can't be touched again).
+                frame += 1
+                if frame % 30 == 0 {
+                    let scene = classifier.classifySynchronously(buffer)
+                    await MainActor.run { self?.latestScene = scene }
+                }
                 await visionEngine.process(sampleBuffer: buffer)
             }
         })
 
-        tasks.append(Task { [visionEngine, orchestrator] in
+        tasks.append(Task { [visionEngine, orchestrator, weak self] in
             for await pose in visionEngine.poseStream {
                 guard let pose else { continue }
-                await orchestrator.process(pose: pose, scene: .outdoor)
+                let scene = await MainActor.run { self?.latestScene ?? .outdoor }
+                await orchestrator.process(pose: pose, scene: scene)
             }
         })
 
