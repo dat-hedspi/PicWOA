@@ -29,9 +29,10 @@ final class AIOrchestrator: AICoachingProvider {
     // Stream-driven tasks (when using start(ruleStream:sceneStream:))
     private var streamTasks: [Task<Void, Never>] = []
     private var latestScene: SceneContext = .unknown
-    // In-flight AI request — cancelled & replaced when a newer call starts, so the
+    // In-flight AI request — cancelled & replaced when the pose materially changes, so the
     // pose loop never blocks on the network (keeps coaching smooth).
     private var aiTask: Task<Void, Never>?
+    private var aiInFlight = false
 
     init(
         config: AIConfig = .load(),
@@ -75,6 +76,7 @@ final class AIOrchestrator: AICoachingProvider {
         streamTasks.removeAll()
         aiTask?.cancel()
         aiTask = nil
+        aiInFlight = false
     }
 
     /// Reset the cache when the user captures — AI_ORCHESTRATION_SPEC §8.
@@ -122,12 +124,21 @@ final class AIOrchestrator: AICoachingProvider {
             return
         }
 
+        // If a call is already running and the pose hasn't materially changed, let it finish
+        // instead of cancel+restart — otherwise latency > throttle would loop forever and the
+        // AI response would never reach the UI.
+        if aiInFlight && !invalidated {
+            finish(.ruleEngineThrottle, since: startedAt, cacheHit: freshCachedResponse() != nil, issues: result.issues.count)
+            return
+        }
+
         // Path D — call AI in a DETACHED task so the pose loop keeps consuming (smooth UX).
         // The Tier-3 fallback was already emitted above; the AI response overrides it when it
-        // arrives. Cancel any in-flight call so a newer pose always wins (no out-of-order overwrite).
+        // arrives. A material pose change cancels the in-flight call so the newer pose wins.
         lastRequestTime = Date()
         let request = OpenAIRequest(from: result, scene: scene)
         aiTask?.cancel()
+        aiInFlight = true
         aiTask = Task { [weak self] in
             await self?.performAICall(request: request, result: result, startedAt: startedAt)
         }
@@ -142,7 +153,8 @@ final class AIOrchestrator: AICoachingProvider {
     ) async {
         do {
             let response = try await backend.send(request)
-            if Task.isCancelled { return }
+            if Task.isCancelled { return }   // superseded — the replacement owns aiInFlight
+            aiInFlight = false
             guard ResponseValidator.validate(response) else {
                 emit(bestAvailableResponse(aiResponse: nil, ruleResult: result))
                 finish(.aiError, since: startedAt, cacheHit: false, issues: result.issues.count, reason: "invalid_response")
@@ -153,9 +165,10 @@ final class AIOrchestrator: AICoachingProvider {
             emit(response)
             finish(.aiSuccess, since: startedAt, cacheHit: false, issues: result.issues.count)
         } catch is CancellationError {
-            return
+            return   // superseded — the replacement owns aiInFlight
         } catch {
             if Task.isCancelled { return }
+            aiInFlight = false
             // Path E — timeout / error → bestAvailable (cached < 30s or rule).
             emit(bestAvailableResponse(aiResponse: nil, ruleResult: result))
             let path: DecisionPath = isTimeout(error) ? .aiTimeout : .aiError

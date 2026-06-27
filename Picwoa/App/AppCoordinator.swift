@@ -82,6 +82,7 @@ final class AppCoordinator {
     func stop() {
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
+        orchestrator.stop()
         hasStarted = false
         cameraEngine.stopSession()
     }
