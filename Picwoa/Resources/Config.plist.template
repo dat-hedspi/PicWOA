@@ -9,8 +9,8 @@
     <key>AI_MODEL_DEFAULT</key>
     <string>gpt-4o-mini</string>
     <key>AI_THROTTLE_SECONDS</key>
-    <integer>3</integer>
+    <integer>4</integer>
     <key>AI_TIMEOUT_SECONDS</key>
-    <real>2.0</real>
+    <real>8.0</real>
 </dict>
 </plist>

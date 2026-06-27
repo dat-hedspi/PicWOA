@@ -23,8 +23,8 @@ struct AIConfig: Sendable {
         apiKey: nil,
         useMockAI: true,
         model: "gpt-4o-mini",
-        throttleSeconds: 3.0,
-        timeoutSeconds: 2.0
+        throttleSeconds: 4.0,
+        timeoutSeconds: 8.0   // realistic for live gpt-4o-mini; 2s timed out before the reply
     )
 
     /// Load config from `Config.plist`. Returns `.default` if not found.
@@ -50,8 +50,8 @@ struct AIConfig: Sendable {
             apiKey: hasRealKey ? rawKey : nil,
             useMockAI: useMock,
             model: (dict["AI_MODEL_DEFAULT"] as? String) ?? "gpt-4o-mini",
-            throttleSeconds: numeric(dict["AI_THROTTLE_SECONDS"]) ?? 3.0,
-            timeoutSeconds: numeric(dict["AI_TIMEOUT_SECONDS"]) ?? 2.0
+            throttleSeconds: numeric(dict["AI_THROTTLE_SECONDS"]) ?? 4.0,
+            timeoutSeconds: numeric(dict["AI_TIMEOUT_SECONDS"]) ?? 8.0
         )
     }
 
